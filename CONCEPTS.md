@@ -176,7 +176,7 @@ s.state == State.ENDED.value         # comparing two strings
 | Name | Where | Values |
 |---|---|---|
 | `State` | `state_machine.py` | `GREETING`, `VERIFYING`, `NEGOTIATING`, `ENDED` |
-| `Tool` | `state_machine.py` | `verify_customer`, `log_promise_to_pay`, `send_payment_link`, `escalate_to_agent`, `mark_disposition` |
+| `Tool` | `state_machine.py` | `verify_customer`, `log_promise_to_pay`, `escalate_to_agent`, `mark_disposition` |
 
 **`Literal` is a lighter cousin of Enum.** `status: Literal["PTP_AGREED", ...]` in Pydantic models means "only these strings are accepted." Dispositions, channels and escalation reasons use `Literal`. They are **not** Enums, so they aren't a single source of truth. Converting them to Enums is a possible later improvement.
 
@@ -381,7 +381,7 @@ When reading the code, translate: *"db is the notebook, session is the call."*
 |---|---|
 | GREETING | `verify_customer`, `mark_disposition` |
 | VERIFYING | `verify_customer`, `mark_disposition` |
-| NEGOTIATING | `log_promise_to_pay`, `send_payment_link`, `escalate_to_agent`, `mark_disposition` |
+| NEGOTIATING | `log_promise_to_pay`, `escalate_to_agent`, `mark_disposition` |
 | ENDED | none |
 
 **3. Prompt per state** (`build_system_prompt`): *what does the LLM know here?* Only `NEGOTIATING` contains debt facts.
@@ -464,13 +464,12 @@ Code: allowed? valid? correct? → runs it → returns a result
 LLM:  reads the result → writes the reply
 ```
 
-## The five tools
+## The four tools
 
 | Tool | Purpose | Arguments | Server-side rules |
 |---|---|---|---|
 | `verify_customer` | Check identity | `verification_code` (4 digits) | Max 2 attempts. Second failure ends the call as `FAILED_AUTH` |
 | `log_promise_to_pay` | Record a PTP | `ptp_date` (ISO), `amount` | Date is today to +30 days. Amount between 90% and 100% of overdue |
-| `send_payment_link` | Send link | `channel` (SMS / WHATSAPP / EMAIL) | Requires a PTP logged first |
 | `escalate_to_agent` | Hand to human | `reason`, `summary` | Creates an `ESC-####` ticket |
 | `mark_disposition` | Final outcome, ends call | `status`, `notes` | Before verification only `WRONG_PERSON`, `DO_NOT_CALL`, `NO_RESPONSE`. `PTP_AGREED` needs a logged PTP |
 
@@ -818,7 +817,6 @@ A brand new `CallSession(...)` has `verify_attempts = None` until it is saved. T
 |---|---|---|
 | `VERIFY` | Each verification attempt | `{"success": false, "attempt": 1}` (never the code) |
 | `PTP` | Promise logged | `{"ptp_id": "PTP-4821", "ptp_date": "2026-10-23", "amount": 8499}` |
-| `PAYMENT_LINK` | Link sent | `{"channel": "SMS"}` |
 | `ESCALATION` | Human handoff | `{"ticket_id": "ESC-3310", "reason": "DISPUTE"}` |
 | `DISPOSITION` | Call ended | `{"status": "PTP_AGREED", "notes": ""}` |
 | `BLOCKED_TOOL` | LLM tried a forbidden tool | `{"tool": "log_promise_to_pay", "state": "GREETING"}` |
@@ -834,7 +832,6 @@ call_sessions:
 call_events:
   1  VERIFY        {"success": true, "attempt": 1}
   2  PTP           {"ptp_id": "PTP-4821", "ptp_date": "2026-10-23", "amount": 8499}
-  3  PAYMENT_LINK  {"channel": "SMS"}
   4  DISPOSITION   {"status": "PTP_AGREED", "notes": ""}
 ```
 
@@ -1459,7 +1456,7 @@ Event PTP written, ptp_logged = True, id "PTP-####" returned
 | 0 | (call starts) | Opening line | GREETING | none |
 | 1 | "Yes, speaking" | Maya asks for PAN digits or birth year | VERIFYING | none |
 | 2 | "1234" | verify succeeds, debt stated | NEGOTIATING | `VERIFY` |
-| 3 | "I'll pay in 3 days" | PTP logged, link sent | NEGOTIATING | `PTP`, `PAYMENT_LINK` |
+| 3 | "I'll pay in 3 days" | PTP logged | NEGOTIATING | `PTP` |
 | 4 | "Thanks, bye" | `mark_disposition(PTP_AGREED)` | ENDED | `DISPOSITION` |
 
 ## Scenario 2: pushing for the amount early

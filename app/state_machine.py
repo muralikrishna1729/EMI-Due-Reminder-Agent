@@ -11,7 +11,6 @@ class State(str, Enum):
 class Tool(str, Enum):
     VERIFY_CUSTOMER = "verify_customer"
     LOG_PTP = "log_promise_to_pay"
-    SEND_LINK = "send_payment_link"
     ESCALATE = "escalate_to_agent"
     MARK_DISPOSITION = "mark_disposition"
 
@@ -22,7 +21,6 @@ ALLOWED_TOOLS: dict[State, set[Tool]] = {
     State.VERIFYING: {Tool.VERIFY_CUSTOMER, Tool.MARK_DISPOSITION},
     State.NEGOTIATING: {
         Tool.LOG_PTP,
-        Tool.SEND_LINK,
         Tool.ESCALATE,
         Tool.MARK_DISPOSITION,
     },
