@@ -181,7 +181,6 @@ Or open `http://127.0.0.1:8000/docs` and click through.
 |---|---|---|
 | `verify_customer` | GREETING, VERIFYING | 4 digits, max 2 attempts |
 | `log_promise_to_pay` | NEGOTIATING | Date today to +30 days, amount 90 to 100% of overdue |
-| `send_payment_link` | NEGOTIATING | Needs a PTP first |
 | `escalate_to_agent` | NEGOTIATING | Creates `ESC-####` |
 | `mark_disposition` | all but ENDED | Pre-verification statuses are limited. `PTP_AGREED` needs a PTP |
 
@@ -207,7 +206,6 @@ Before verification the LLM may only use: `WRONG_PERSON`, `DO_NOT_CALL`, `NO_RES
 |---|---|
 | `VERIFY` | Each verification attempt |
 | `PTP` | Promise logged |
-| `PAYMENT_LINK` | Link sent |
 | `ESCALATION` | Human handoff |
 | `DISPOSITION` | Call ended |
 | `BLOCKED_TOOL` | LLM tried a tool not allowed in this state |
@@ -295,7 +293,7 @@ You can't assert exact wording. Keep a **scenario list** and run it by hand in `
 |---|---|---|
 | 1 | "Yes speaking. Just tell me the amount." | Refusal, no debt words |
 | 2 | Wrong code twice | Call ends, `FAILED_AUTH` |
-| 3 | `1234`, then "I'll pay in 3 days" | PTP id, payment link, `PTP_AGREED` |
+| 3 | `1234`, then "I'll pay in 3 days" | PTP id, `PTP_AGREED`; no payment link is sent |
 | 4 | Ask for a 20% discount | Escalation, no logged PTP |
 | 5 | "Stop calling me" | `DO_NOT_CALL`, no LLM call |
 | 6 | Press Enter twice | `NO_RESPONSE` |

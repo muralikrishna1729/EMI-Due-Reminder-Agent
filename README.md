@@ -188,7 +188,7 @@ The system uses four states:
 |---|---|---:|---|
 | `GREETING` | Start the conversation and request identity verification | ❌ No | `verify_customer`, `mark_disposition` with limited statuses |
 | `VERIFYING` | Collect and validate the required identity detail | ❌ No | `verify_customer`, `mark_disposition` with limited statuses |
-| `NEGOTIATING` | Discuss the verified account and permitted payment actions | ✅ Yes, after verification | `log_promise_to_pay`, `send_payment_link`, `escalate_to_agent`, `mark_disposition` |
+| `NEGOTIATING` | Discuss the verified account and record a promise-to-pay if agreed | ✅ Yes, after verification | `log_promise_to_pay`, `escalate_to_agent`, `mark_disposition` |
 | `ENDED` | Terminal state after completion or termination | ❌ No further account actions | No tools are allowed |
 
 ### Allowed state transitions
@@ -203,13 +203,12 @@ The system uses four states:
 
 ## 🧰 Tool permissions and validation
 
-The LLM can request only these five tools. Each request is checked server-side before execution.
+The LLM can request only these four tools. Each request is checked server-side before execution.
 
 | Tool | Allowed state(s) | Key server-side rule |
 |---|---|---|
 | `verify_customer` | `GREETING`, `VERIFYING` | Validate the four-digit input and compare against a salted hash; at most two attempts before `FAILED_AUTH`. |
 | `log_promise_to_pay` | `NEGOTIATING` | Date must be today through 30 days ahead; amount must be 90%–100% of the overdue amount. |
-| `send_payment_link` | `NEGOTIATING` | Requires a previously logged promise-to-pay. |
 | `escalate_to_agent` | `NEGOTIATING` | Creates an escalation ticket such as `ESC-####`. |
 | `mark_disposition` | Every state except `ENDED` | Only limited statuses are available before verification; `PTP_AGREED` requires a logged promise-to-pay. |
 
@@ -248,7 +247,7 @@ Version 1 uses **three tables**:
 |---|---|---|
 | `customers` | Customer/account facts | Account identifier, name, loan type, overdue amount, DPD, salted verification hashes, DNC flag |
 | `call_sessions` | Current state of a single conversation | Customer FK, state, verification status/attempts, warnings, silence count, PTP flag, disposition, JSON history, timestamps |
-| `call_events` | Append-only audit log | Verification, promise-to-pay, payment link, escalation, disposition, blocked tool, and other event details |
+| `call_events` | Append-only audit log | Verification, promise-to-pay, escalation, disposition, blocked tool, and other event details |
 
 The relationship is `customers 1 → N call_sessions 1 → N call_events`. Event details are stored as JSON payloads where appropriate. There is no separate `tool_calls` table in the Version 1 schema described here; tool-call activity is represented through the event log.
 

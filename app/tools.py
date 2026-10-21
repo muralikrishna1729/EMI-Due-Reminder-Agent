@@ -25,10 +25,6 @@ class PTPArgs(BaseModel):
     ptp_date: date = Field(description="Promised payment date, ISO-8601 (YYYY-MM-DD)")
     amount: int = Field(gt=0, description="Promised amount in rupees")
 
-class LinkArgs(BaseModel):
-    channel: Literal["SMS", "WHATSAPP", "EMAIL"]
-
-
 class EscalateArgs(BaseModel):
     reason: Literal["DISPUTE", "HARDSHIP", "WAIVER_REQUEST", "OTHER"]
     summary: str = ""
@@ -55,10 +51,6 @@ TOOL_SPECS: dict[Tool, tuple[str, type[BaseModel]]] = {
         VerifyArgs,
     ),
     Tool.LOG_PTP: ("Record the customer's promise to pay.", PTPArgs),
-    Tool.SEND_LINK: (
-        "Send a payment link. Only after a promise to pay is logged.",
-        LinkArgs,
-    ),
     Tool.ESCALATE: (
         "Hand over to a human agent for disputes, hardship or discount requests.",
         EscalateArgs,
@@ -168,14 +160,6 @@ def _ptp(db, s: CallSession, raw: dict) -> dict:
         "confirmed_date": a.ptp_date.isoformat()
     }
 
-def _link(db, s: CallSession, raw: dict) -> dict:
-    a = LinkArgs.model_validate(raw)
-    if not s.ptp_logged:
-        return {"ok": False, "error": "Log a promise to pay before sending a link."}
-    log_event(db, s, "PAYMENT_LINK", {"channel": a.channel})
-    db.commit()
-    return {"ok": True, "message": f"Payment link sent via {a.channel}."}
-
 def _escalate(db, s: CallSession, raw: dict) -> dict:
     a = EscalateArgs.model_validate(raw)
     ticket = f"ESC-{secrets.randbelow(9000) + 1000}"
@@ -195,7 +179,6 @@ def _disposition(db, s: CallSession, raw: dict) -> dict:
 HANDLERS: dict[Tool, Callable[..., dict]] = {
     Tool.VERIFY_CUSTOMER: _verify,
     Tool.LOG_PTP: _ptp,
-    Tool.SEND_LINK: _link,
     Tool.ESCALATE: _escalate,
     Tool.MARK_DISPOSITION: _disposition,
 }
@@ -206,8 +189,9 @@ def execute_tool(db, s: CallSession, name: str, raw_args: dict) -> dict:
     except ValueError:
         return {"ok": False, "error": f"Unknown tool: {name}"}
 
-    if tool not in ALLOWED_TOOLS[State(s.state)]:
-        log_event(db, s, "TOOL_DENIED", {"tool": name, "state": s.state})
+    if s.state == State.ENDED.value or tool not in ALLOWED_TOOLS[State(s.state)]:
+        log_event(db, s, "BLOCKED_TOOL", {"tool": name, "state": s.state})
+        db.commit()
         return {"ok": False, "error": f"Tool {name} is not allowed in state {s.state}"}
     try:
         return HANDLERS[tool](db, s, raw_args)
