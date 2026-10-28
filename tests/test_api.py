@@ -29,6 +29,11 @@ def test_reports_require_the_api_key(client):
     assert client.get("/metrics", headers={"X-API-Key": "wrong"}).status_code == 401
 
 
+def test_account_id_is_case_insensitive(client):
+    assert client.post("/calls", json={"account_id": "acc-88392"}).status_code == 200
+    assert client.post("/calls", json={"account_id": "  Acc-88392 "}).status_code == 200
+
+
 def test_dnc_flow_metrics_and_blocking(client):
     r = client.post("/calls", json={"account_id": "ACC-88392"})
     assert r.status_code == 200
