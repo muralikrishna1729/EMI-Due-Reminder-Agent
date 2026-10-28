@@ -27,7 +27,8 @@ class StartCall(BaseModel):
 
 @app.post("/calls")
 def create_call(body: StartCall, db: Session= Depends(get_db)):
-    customer= db.scalar(select(Customer).where(Customer.account_id == body.account_id))
+    account_id = body.account_id.strip().upper()
+    customer= db.scalar(select(Customer).where(Customer.account_id == account_id))
     if not customer:
         raise HTTPException(404, "Unknown Account")
     if customer.do_not_call:
