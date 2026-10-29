@@ -8,3 +8,5 @@ groq
 langgraph
 pytest
 httpx
+pyyaml
+deepeval>=0.21.0

@@ -3,7 +3,13 @@ BASE = "http://127.0.0.1:8000"
 
 def main()-> None:
     account = input("Account ID [ACC-88392]: ").strip() or "ACC-88392"
-    r = httpx.post(f"{BASE}/calls", json={"account_id":account}, timeout=30)
+    r = httpx.post(f"{BASE}/calls", json={"account_id": account}, timeout=30)
+    if r.status_code == 404:
+        print("Unknown account ID. Try ACC-88392 or ACC-77120.")
+        return 
+    if r.status_code == 403:
+        print("That customer asked not to be called.")
+        return
     r.raise_for_status() #shows server errors clearly
     data = r.json()
     sid = data["session_id"]

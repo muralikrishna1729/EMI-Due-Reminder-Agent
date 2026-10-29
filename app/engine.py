@@ -1,20 +1,24 @@
+import logging
 from pydantic._internal._generics import replace_types
 from sqlalchemy import exc
 from httpx import request
 import json
 from dataclasses import dataclass
-
 from groq import GroqError
 from sqlalchemy.orm import Session
-
 from app import config
-from app.guardrails import DNC_RE, is_abusive, sanitize_pre_auth_reply
+from app.guardrails import (
+    DNC_RE, SAFE_GOODBYE, THIRD_PARTY_RE, is_abusive, sanitize_pre_auth_reply, tidy_reply,
+)
+from app.tool_checks import check_tool_request
+from app.tools import end_call, execute_tool, log_event, schemas_for_state
 from app.llm import chat
 from app.models import CallSession, Customer
 from app.prompts import build_system_prompt
 from app.state_machine import State, next_state
-from app.tools import end_call, execute_tool, schemas_for_state
+from datetime import date
 
+logger = logging.getLogger("EMI_Agent")
 FALLBACK_REPLY = "Sorry, I didn't catch that. Could you please repeat?"
 
 @dataclass
@@ -66,6 +70,11 @@ def precheck(db:Session, s: CallSession, user_text:str)->str | None:
             return "I'm ending this call now. Goodbye."
         db.commit()
         return "I understand this is frustrating, but I'll need us to keep this respectful to continue."
+    
+    if not s.verified and THIRD_PARTY_RE.search(text):
+        end_call(db,s, "WRONG_PERSON", "Someone other then the customer answered.")
+        return SAFE_GOODBYE
+
     return None
 
 
@@ -77,11 +86,15 @@ def llm_round(db:Session, s:CallSession, messages: list[dict], llm = chat):
     """One LLM call. Returns (reply, messages); reply=None means tools ran."""
     try:
         response = llm(messages, schemas_for_state(State(s.state)))
-    except GroqError:
+    except GroqError as exc:
+        logger.warning("LLM call failed: %r", exc)
         return FALLBACK_REPLY, messages
     msg = response.choices[0].message
     if not msg.tool_calls:
-        return (msg.content or "").strip(), messages
+        text = (msg.content or "").strip()
+        if not text:
+            logger.warning("LLM returned an empty reply")
+        return text, messages
     
     messages = messages + [{
     "role": "assistant",
@@ -100,7 +113,15 @@ def llm_round(db:Session, s:CallSession, messages: list[dict], llm = chat):
             args = {}
         if not isinstance(args, dict):
             args = {}
-        result = execute_tool(db, s, tc.function.name, args)
+        problem = check_tool_request(tc.function.name, args, messages, date.today())
+        if problem:
+            log_event(db, s, "BLOCKED_TOOL",
+                      {"tool": tc.function.name, "state": s.state, "reason": problem}
+            )
+            db.commit()
+            result = {"ok": False, "error": problem}
+        else:
+            result = execute_tool(db, s, tc.function.name, args)
         messages.append({
             "role": "tool",
             "tool_call_id": tc.id,
@@ -113,6 +134,7 @@ def llm_round(db:Session, s:CallSession, messages: list[dict], llm = chat):
 
 def finalize(db:Session, s:CallSession, user_text:str, reply:str | None)-> TurnResult:
     reply = (reply or "").strip() or FALLBACK_REPLY
+    reply = tidy_reply(reply)
     if not s.verified:
         reply = sanitize_pre_auth_reply(reply, call_ended = s.state == State.ENDED.value)
     if s.state == State.GREETING.value:

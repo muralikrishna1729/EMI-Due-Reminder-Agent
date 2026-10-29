@@ -152,3 +152,19 @@ def test_happy_path_without_any_payment_link(db, verified_call):
     r = execute_tool(db, verified_call, "mark_disposition", {"status": "PTP_AGREED"})
     assert r["call_ended"] is True and verified_call.state == "ENDED"
     assert [e.type for e in events(db, verified_call)] == ["PTP", "DISPOSITION"]
+
+
+def test_disputed_requires_an_escalation_first(db, verified_call):
+    r = execute_tool(db, verified_call, "mark_disposition", {"status": "DISPUTED"})
+    assert r["ok"] is False and "escalate_to_agent" in r["error"]
+    assert verified_call.state == "NEGOTIATING"
+    execute_tool(db, verified_call, "escalate_to_agent", {"reason": "WAIVER_REQUEST"})
+    r = execute_tool(db, verified_call, "mark_disposition", {"status": "HARDSHIP_ESCALATED"})
+    assert r["ok"] is True and verified_call.state == "ENDED"
+
+
+def test_llm_notes_are_labelled(db, verified_call):
+    execute_tool(db, verified_call, "escalate_to_agent", {"reason": "OTHER"})
+    execute_tool(db, verified_call, "mark_disposition", {"status": "DISPUTED", "notes": "hello"})
+    ev = events(db, verified_call, "DISPOSITION")[0]
+    assert ev.payload["notes"] == "[LLM-written] hello"

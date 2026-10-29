@@ -43,6 +43,7 @@ class DispositionArgs(BaseModel):
 
 # Statuses the LLM may use before the customer is verified.
 PRE_AUTH_STATUSES = {"WRONG_PERSON", "DO_NOT_CALL", "NO_RESPONSE"}
+NEEDS_ESCALATION = {"DISPUTED", "HARDSHIP_ESCALATED"}
 
 # documentation description and Pydantic argument schema for each tool.
 TOOL_SPECS: dict[Tool, tuple[str, type[BaseModel]]] = {
@@ -173,7 +174,16 @@ def _disposition(db, s: CallSession, raw: dict) -> dict:
         return {"ok": False, "error": f"Status {a.status} is not allowed before verification."}
     if a.status == "PTP_AGREED" and not s.ptp_logged:
         return {"ok": False, "error": "Log a promise to pay first."}
-    end_call(db, s, a.status, a.notes)
+    if a.status in NEEDS_ESCALATION:
+        escalated = db.query(CallEvent).filter_by(session_id = s.id, type = "ESCALATION").count()
+        if not escalated:
+            return{
+               "ok": False,
+                "error": "Call escalate_to_agent first, tell the customer a human agent "
+                         "will follow up, then end the call.", 
+            } 
+
+    end_call(db, s, a.status, f"[LLM-written] {a.notes}" if a.notes else "")
     return {"ok": True, "disposition_logged": a.status, "call_ended": True}
 
 HANDLERS: dict[Tool, Callable[..., dict]] = {
