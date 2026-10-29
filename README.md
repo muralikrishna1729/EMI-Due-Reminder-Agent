@@ -33,6 +33,7 @@
 - [Project structure](#-project-structure)
 - [Run locally](#-run-locally)
 - [Testing strategy](#-testing-strategy)
+- [Hybrid evaluation framework](#-hybrid-evaluation-framework)
 - [Metrics](#-metrics)
 - [Version 1 limitations](#-version-1-limitations)
 - [Roadmap](#-roadmap)
@@ -57,6 +58,7 @@ The central safety rule is simple: **verify first, disclose second, always log t
 | 🛡️ Layered guardrails | Prechecks, prompt data isolation, tool gating, and output filtering work together. |
 | 🧾 Auditability | Conversation events are persisted in an append-only `call_events` table. |
 | 🧪 Deterministic tests | A scripted fake LLM tests expected and adversarial behavior without calling a live model. |
+| 🔎 Hybrid evaluation | Deterministic safety checks combined with a Groq-backed DeepEval semantic judge. |
 
 ## 🧩 Problem and design principles
 
@@ -278,43 +280,58 @@ The API table is an overview of the documented routes; request/response schemas 
 | Planned database | PostgreSQL | Later-version persistence target |
 | Optional orchestration | LangGraph | Alternative graph-based turn pipeline |
 | Testing | pytest, httpx, scripted fake LLM | Deterministic unit and API tests |
+| Evaluation | DeepEval + Groq (`openai/gpt-oss-120b`) | Hybrid LLM-based semantic quality evaluation |
 
 ## 📁 Project structure
 
-The repository is structured with modular application code under `app/` and test suites under `tests/`:
+The repository is structured with modular application code under `app/`, test suites under `tests/`, and the hybrid evaluation framework under `evals/`:
 
 ```text
 EMI-Due-Reminder-Agent/
 ├── app/
 │   ├── __init__.py
-│   ├── config.py          # Constants (limits, model name, keys)
-│   ├── db.py              # Database connection & session factory
-│   ├── engine.py          # Turn pipeline (start_call, handle_turn)
-│   ├── guardrails.py      # Forbidden-word filter, DNC regex, abuse detector
-│   ├── llm.py             # Groq LLM integration
-│   ├── main.py            # FastAPI endpoints & metrics
-│   ├── models.py          # SQLAlchemy tables (Customer, CallSession, CallEvent)
-│   ├── prompts.py         # State-specific system prompts
-│   ├── security.py        # Salted hashing and name masking
-│   ├── seed.py            # Demo customer seeder
-│   ├── state_machine.py   # States, tools, allowed-tools matrix, transitions
-│   └── tools.py           # 5 tool handlers, Pydantic validation, execute_tool
+│   ├── config.py              # Constants (limits, model name, keys)
+│   ├── db.py                  # Database connection & session factory
+│   ├── engine.py              # Turn pipeline (start_call, handle_turn)
+│   ├── guardrails.py          # Forbidden-word filter, DNC regex, abuse detector
+│   ├── llm.py                 # Groq LLM integration
+│   ├── main.py                # FastAPI endpoints & metrics
+│   ├── models.py              # SQLAlchemy tables (Customer, CallSession, CallEvent)
+│   ├── prompts.py             # State-specific system prompts
+│   ├── security.py            # Salted hashing and name masking
+│   ├── seed.py                # Demo customer seeder
+│   ├── state_machine.py       # States, tools, allowed-tools matrix, transitions
+│   └── tools.py               # Tool handlers, Pydantic validation, execute_tool
+├── evals/                     # Hybrid evaluation framework
+│   ├── __init__.py
+│   ├── checks.py              # Deterministic safety assertions (authoritative)
+│   ├── deepeval_metrics.py    # DeepEval metric wrappers with error handling
+│   ├── judge.py               # Groq-backed LLM judge configuration
+│   ├── report.py              # HybridCaseResult, pass/fail logic, judge-error detection
+│   ├── run_eval.py            # CLI entry point (--judge-model, --deterministic-only)
+│   ├── runner.py              # Test case executor and dataset loader
+│   ├── schema.py              # Pydantic schemas for eval cases and results
+│   └── datasets/
+│       └── emi_agent_v1.yaml  # 8 evaluation scenarios (safety + quality)
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py        # Pytest fixtures (db, customer, call)
-│   ├── helpers.py         # Scripted fake LLM for deterministic tests
-│   ├── test_guardrails.py # Leak and abuse filter tests
-│   ├── test_scenarios.py  # End-to-end conversation scenario tests
-│   ├── test_state_machine.py # State machine transition tests
-│   └── test_tools.py      # Tool validation & boundary tests
-├── assets/                # Architectural diagrams
-├── chat_cli.py            # Terminal test client
-├── pytest.ini             # Pytest configuration
-├── requirements.txt       # Dependencies
-├── .env.example           # Example environment variables
-├── README.md              # Project documentation
-├── CONCEPTS.md            # Deep architecture & theory guide
-└── BUILD_AND_DEBUG.md     # Build order & debug guide
+│   ├── conftest.py            # Pytest fixtures (db, customer, call)
+│   ├── helpers.py             # Scripted fake LLM for deterministic tests
+│   ├── test_deepeval_quality.py  # DeepEval semantic quality tests
+│   ├── test_guardrails.py        # Leak and abuse filter tests
+│   ├── test_hybrid_evaluation.py # Hybrid eval integration tests
+│   ├── test_hybrid_report.py     # Report logic and judge-error handling tests
+│   ├── test_scenarios.py         # End-to-end conversation scenario tests
+│   ├── test_state_machine.py     # State machine transition tests
+│   └── test_tools.py             # Tool validation & boundary tests
+├── assets/                    # Architectural diagrams (PNG)
+├── chat_cli.py                # Terminal test client
+├── pytest.ini                 # Pytest configuration
+├── requirements.txt           # Dependencies
+├── .env.example               # Example environment variables
+├── README.md                  # Project documentation
+├── CONCEPTS.md                # Deep architecture & theory guide
+└── BUILD_AND_DEBUG.md         # Build order & debug guide
 ```
 
 ## 🚀 Run locally
@@ -391,6 +408,58 @@ pytest
 
 The automated test suite does **not** replace a separately controlled evaluation against a real LLM.
 
+## 🔎 Hybrid Evaluation Framework
+
+The project includes a **Hybrid Evaluation Framework** under `evals/` that combines code-enforced deterministic safety checks with LLM-based semantic quality evaluation using [DeepEval](https://github.com/confident-ai/deepeval) and Groq.
+
+### Design
+
+| Layer | Role | Authoritative? |
+|---|---|---|
+| **Deterministic checks** (`checks.py`) | Assert safety invariants in code — no pre-auth disclosure, verification gate enforced, no unauthorized tool calls | ✅ Yes — a failure here is a hard failure |
+| **DeepEval semantic judge** (`deepeval_metrics.py`) | Score response relevance using a Groq-hosted LLM (`openai/gpt-oss-120b`) | ℹ️ Informational — quality signal only |
+
+### Dataset
+
+Eight evaluation scenarios are defined in `evals/datasets/emi_agent_v1.yaml`:
+
+| Scenario | Safety checks | Semantic judge |
+|---|---|---|
+| `privacy_before_verification` | No pre-auth disclosure, verification gate | N/A (safety invariant) |
+| `ambiguous_ptp` | No ambiguous PTP recorded | Answer relevance |
+| `hardship_response` | No prohibited tools, no payment links | Answer relevance |
+| `failed_verification` | Failed auth does not enter NEGOTIATING | N/A |
+| `third_party_access` | Third-party request blocked | N/A |
+| `explicit_ptp_confirmed` | PTP event logged with correct amount/date | Answer relevance |
+| `unauthorized_payment_link` | No payment link before logged PTP | N/A |
+| `abusive_language_escalation` | Warning issued, session escalated | N/A |
+
+### How to run
+
+```powershell
+# Default judge model (openai/gpt-oss-120b via Groq)
+.venv\Scripts\python -m evals.run_eval
+
+# Explicit model
+.venv\Scripts\python -m evals.run_eval --judge-model openai/gpt-oss-120b
+
+# Skip the LLM judge entirely (deterministic checks only)
+.venv\Scripts\python -m evals.run_eval --deterministic-only
+```
+
+Requires `GROQ_API_KEY` in your `.env` file. The evaluation framework never modifies production agent behavior.
+
+### Error handling
+
+- A **provider error** (e.g., 404, 429) returns `score: None` and `status: ERROR` — it is **not** reported as a `0.00` relevance score.
+- Judge errors are displayed separately in the report and do not cause a deterministic `PASS` case to become `FAIL`.
+
+### Run evaluation tests
+
+```powershell
+.venv\Scripts\python -m pytest -q tests/test_hybrid_evaluation.py tests/test_hybrid_report.py tests/test_deepeval_quality.py
+```
+
 ## 📊 Metrics
 
 Version 1 tracks:
@@ -418,7 +487,7 @@ These limitations are important for an engineering prototype. Do not treat the c
 
 | Version | Planned scope | Status in this package |
 |---|---|---|
-| **Version 1** | Text agent, state machine, tool validation, guardrails, SQLite persistence, audit events, deterministic tests | **Current scope** |
+| **Version 1** | Text agent, state machine, tool validation, guardrails, SQLite persistence, audit events, deterministic tests, hybrid evaluation framework | **Current scope** |
 | **Version 2** | More scenarios, improved metrics, PostgreSQL, migrations, stronger error handling, documentation hardening | Future plan |
 | **Version 3** | Optional voice interface, such as browser microphone or Vapi web call | Future plan |
 
@@ -432,7 +501,7 @@ Use synthetic data for demos and tests. Never publish customer names, account id
 
 <div align="center">
 
-**Version 1 · Text-only · Code-enforced rules · Deterministic tests**
+**Version 1 · Text-only · Code-enforced rules · Deterministic tests · Hybrid evaluation**
 
 
 </div>
