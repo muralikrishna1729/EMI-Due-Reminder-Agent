@@ -1,0 +1,40 @@
+# Run the app together with a Postgres database:
+#   docker compose up --build
+#   docker compose run --rm app python -m app.seed     # create the demo customer (first time)
+# Then open http://localhost:8000/docs
+#
+# Secrets come from your local .env file (never commit it):
+#   GROQ_API_KEY=...   ADMIN_API_KEY=...
+
+services:
+  app:
+    build:
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: True
+    environment:
+      # Overrides DATABASE_URL from .env so the app talks to the db container.
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/swaram
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: swaram
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d maya" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+
