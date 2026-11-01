@@ -36,7 +36,7 @@ SAFE_GOODBYE = "Sorry for the interruption. Have a good day. Goodbye."
 
 def is_abusive(text: str) -> bool:
     t = text.lower()
-    return any(term in t for term in ABUSE_TERMS)
+    return any(term.lower() in t for term in ABUSE_TERMS)
 
 def leaks_debt_info(text:str)->bool:
     return bool(FORBIDDEN_PRE_AUTH.search(text))
