@@ -167,7 +167,9 @@ def run_case(
     # 2. YAML-driven outcome checks ----------------------------------------
     custom_checks.extend(check_expected_outcome(case, db_session, session, reply))
 
-    # 3. Per-case invariants (always run, cannot be omitted by a case) -----
+    # 3 Per‑case invariants (always run) – **must not be blocked** by a
+    #    failing judge.  If any invariant raises, we still record it,
+    #    but we never abort the whole case here.
     for name, fn in INVARIANTS:
         try:
             fn(db_session, session, reply)
@@ -193,21 +195,47 @@ def run_case(
             )
         )
 
-    # 4. DeepEval judge (informational, does not override custom failures) --
+    # -----------------------------------------------------------------
+    # 4. DeepEval judge – **informational only**.  Any exception from the
+    #    judge (e.g. Groq rate‑limit) should *not* flip the deterministic
+    #    outcome.  The metric wrapper already returns an error dict, so we
+    #    simply capture that dict and continue.
+    # -----------------------------------------------------------------
     deepeval_results: list[dict[str, Any]] = []
     if run_deepeval and case.deepeval.enabled and not execution_error:
         metric_name = case.deepeval.metric or "answer_relevancy"
         if metric_name == "answer_relevancy":
-            eval_data = evaluate_answer_relevance(
-                customer_input=case.customer_input,
-                actual_reply=reply,
-                model=judge_model,
-                threshold=case.deepeval.threshold,
-            )
-            deepeval_results.append(eval_data)
+            try:
+                eval_data = evaluate_answer_relevance(
+                    customer_input=case.customer_input,
+                    actual_reply=reply,
+                    model=judge_model,
+                    threshold=case.deepeval.threshold,
+                )
+                deepeval_results.append(eval_data)
+            except Exception as exc:
+                # Should never happen because the metric itself already guards,
+                # but we protect against unexpected bugs in the wrapper.
+                logger.warning(
+                    "DeepEval evaluation crashed unexpectedly: %s", exc
+                )
+                deepeval_results.append(
+                    {
+                        "metric": metric_name,
+                        "passed": False,
+                        "status": "ERROR",
+                        "reason": f"Unexpected DeepEval crash: {exc}",
+                    }
+                )
         else:
             logger.warning("Unsupported DeepEval metric requested: %s", metric_name)
 
+    # -----------------------------------------------------------------
+    # 5. Final result – a case is considered **passed** if:
+    #    * no execution_error (agent turn succeeded)
+    #    * **all deterministic custom_checks are passed** (the test asserts this)
+    #    * DeepEval results are informational and may be failures.
+    # -----------------------------------------------------------------
     return HybridCaseResult(
         case_id=case.id,
         custom_checks=custom_checks,
