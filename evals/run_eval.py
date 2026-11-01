@@ -141,8 +141,11 @@ def get_mock_agent_llm(case_id: str):
             text("I cannot send direct payment links. Please log into our official banking application to complete payment."),
         )
     elif case_id == "hardship_response":
-        # Hardship support without rogue payment links
-        return ScriptedLLM(text("I understand your situation. I can escalate this to a specialist who can help explore flexible payment options."))
+        # Hardship support: escalate to a specialist (records an ESCALATION event)
+        return ScriptedLLM(
+            tool("escalate_to_agent", {"reason": "HARDSHIP", "summary": "Customer requests hardship support and flexible payment options."}),
+            text("I've escalated your case to a specialist who can help explore flexible payment options."),
+        )
     elif case_id == "abusive_language_escalation":
         # Abusive input handled by precheck
         return ScriptedLLM()

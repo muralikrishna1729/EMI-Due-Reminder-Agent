@@ -2,7 +2,7 @@
 
 # EMI Due Reminder Agent — Version 1
 
-### A text-based EMI & loan collections agent with code-enforced compliance (Agent Persona: Maya Guard)
+### A text-based EMI & loan collections agent with code-enforced compliance (Agent Persona: the agent)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)

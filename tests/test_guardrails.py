@@ -56,6 +56,11 @@ def test_abuse_detection():
     assert is_abusive("you idiot")
     assert not is_abusive("I will pay on Friday")
 
+def test_abuse_phrase_ruining_life():
+    assert is_abusive("I am ruining your life")
+    assert is_abusive("you idiot")
+    assert not is_abusive("I will pay on Friday")
+
 
 def test_sanitizer_replaces_leaks_only():
     assert sanitize_pre_auth_reply("Your overdue EMI is pending", call_ended=False) == SAFE_VERIFY_PROMPT

@@ -1,7 +1,4 @@
 import logging
-from pydantic._internal._generics import replace_types
-from sqlalchemy import exc
-from httpx import request
 import json
 from dataclasses import dataclass
 from groq import GroqError
@@ -26,7 +23,7 @@ class TurnResult:
     reply:str
     state:str
     ended:bool
-    disposition:str | bool
+    disposition:str | None
 
 
 def start_call(db:Session, customer: Customer)-> tuple[CallSession,str]:
@@ -72,7 +69,7 @@ def precheck(db:Session, s: CallSession, user_text:str)->str | None:
         return "I understand this is frustrating, but I'll need us to keep this respectful to continue."
     
     if not s.verified and THIRD_PARTY_RE.search(text):
-        end_call(db,s, "WRONG_PERSON", "Someone other then the customer answered.")
+        end_call(db,s, "WRONG_PERSON", "Someone other than the customer answered.")
         return SAFE_GOODBYE
 
     return None

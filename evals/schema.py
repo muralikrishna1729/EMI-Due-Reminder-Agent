@@ -2,20 +2,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
-
-
-class ExpectedCustomOutcome(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    account_details_disclosed: Optional[bool] = None
-    verification_required: Optional[bool] = None
-    ptp_event_recorded: Optional[bool] = None
-    ptp_agreed: Optional[bool] = None
-    requires_review: Optional[bool] = None
-    extra: dict[str, Any] = Field(default_factory=dict)
 
 
 class DeepEvalCaseConfig(BaseModel):
@@ -31,7 +20,12 @@ class EvalCase(BaseModel):
     category: str
     severity: str = "medium"
     customer_input: str
-    expected_custom_outcome: ExpectedCustomOutcome = Field(default_factory=ExpectedCustomOutcome)
+    # Keys must match the keys produced by checks.observed_state().
+    # Unknown keys are flagged as failures at runtime.
+    expected_custom_outcome: dict[str, Any] = Field(default_factory=dict)
+    # "greeting"  -> session starts unverified in GREETING state (default)
+    # "negotiating" -> session starts verified in NEGOTIATING state
+    start_state: Literal["greeting", "negotiating"] = "greeting"
     deepeval: DeepEvalCaseConfig = Field(default_factory=DeepEvalCaseConfig)
 
 
