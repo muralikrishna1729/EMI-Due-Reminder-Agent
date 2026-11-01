@@ -96,7 +96,15 @@ def check_expected_outcome(
     seen = observed_state(db, call, reply)
     results: list[CustomCheckResult] = []
 
-    for key, want in (case.expected_custom_outcome or {}).items():
+    expected = case.expected_custom_outcome
+    if expected is None:
+        expected_dict = {}
+    elif isinstance(expected, dict):
+        expected_dict = expected
+    else:
+        # pydantic model – convert to plain dict
+        expected_dict = expected.model_dump()
+    for key, want in expected_dict.items():
         if key not in seen:
             results.append(
                 CustomCheckResult(

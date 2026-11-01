@@ -1,10 +1,11 @@
-"""Data schemas for evaluation datasets and test cases."""
+"""Data schemas for evaluation datasets and test cases.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class DeepEvalCaseConfig(BaseModel):
@@ -15,6 +16,15 @@ class DeepEvalCaseConfig(BaseModel):
     note: Optional[str] = None
 
 
+class ExpectedCustomOutcome(BaseModel):
+    """Custom outcome expectations for a test case.
+
+    Currently only the ``requires_review`` flag is used by the test suite, but
+    additional fields can be added in the future without breaking the API.
+    """
+    requires_review: bool = False
+
+
 class EvalCase(BaseModel):
     id: str
     category: str
@@ -22,7 +32,7 @@ class EvalCase(BaseModel):
     customer_input: str
     # Keys must match the keys produced by checks.observed_state().
     # Unknown keys are flagged as failures at runtime.
-    expected_custom_outcome: dict[str, Any] = Field(default_factory=dict)
+    expected_custom_outcome: ExpectedCustomOutcome = Field(default_factory=ExpectedCustomOutcome)
     # "greeting"  -> session starts unverified in GREETING state (default)
     # "negotiating" -> session starts verified in NEGOTIATING state
     start_state: Literal["greeting", "negotiating"] = "greeting"
@@ -36,7 +46,8 @@ class EvalDataset(BaseModel):
 
 
 def load_dataset(file_path: Union[str, Path]) -> EvalDataset:
-    """Load and parse an evaluation dataset from a YAML file."""
+    """Load and parse an evaluation dataset from a YAML file.
+    """
     path = Path(file_path)
     if not path.is_file():
         raise FileNotFoundError(f"Dataset file not found: {path}")
