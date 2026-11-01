@@ -141,7 +141,7 @@ def observed_state(db, call, reply: str) -> dict:
             [t for t in FORBIDDEN_PAYMENT_ARTIFACTS if t.lower() in reply.lower()]
             or URL_OR_UPI.search(reply)
         ),
-        "requires_review": True,  # always true for deterministic test
+        "requires_review": "ESCALATION" in types,
     }
 
 def assert_no_ptp_event(db, call) -> None:
