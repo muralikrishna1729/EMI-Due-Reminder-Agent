@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EMI reminder: hands-free demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 680px; margin: 2rem auto; padding: 0 1rem; }
+  #meter { width: 100%; height: 14px; }
+  #log p { margin: .4rem 0; }
+  #status { color: #555; min-height: 1.4em; }
+  details { margin: 1rem 0; }
+  label { display: block; margin: .3rem 0; }
+</style>
+</head>
+<body>
+<h1>EMI Due Reminder Agent (hands-free)</h1>
+<div>
+  <input id="account" value="ACC-88392">
+  <button id="start">Start call</button>
+  <button id="stop" disabled>End call</button>
+</div>
+<p id="status">Not in a call</p>
+<label>Mic level <meter id="meter" min="0" max="0.2" value="0"></meter></label>
+<details>
+  <summary>Tuning</summary>
+  <label>Speech threshold (minimum volume) <input id="minVol" type="number" step="0.005" value="0.02"></label>
+  <label>End of speech after silence (ms) <input id="endSilence" type="number" step="100" value="1000"></label>
+  <label>Wait for you to start speaking (ms) <input id="startTimeout" type="number" step="500" value="8000"></label>
+</details>
+<div id="log"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const TICK_MS = 50, START_MS = 250, MIN_SPEECH_MS = 400, MAX_SPEECH_MS = 15000, TAIL_GUARD_MS = 400;
+
+let sessionId = null, stream = null, audioCtx = null, analyser = null, buf = null, timer = null;
+let phase = "idle";               // idle | agent_speaking | listening | processing
+let recorder = null, chunks = [];
+let speaking = false, loudMs = 0, quietMs = 0, windowStart = 0, speechStart = 0, noiseFloor = 0.005;
+
+const setStatus = (t) => { $("status").textContent = t; };
+function addLine(who, text) {
+  const p = document.createElement("p");
+  p.textContent = `${who}: ${text}`;
+  $("log").appendChild(p);
+}
+function cfg() {
+  return {
+    minVol: parseFloat($("minVol").value) || 0.02,
+    endSilence: parseInt($("endSilence").value, 10) || 1000,
+    startTimeout: parseInt($("startTimeout").value, 10) || 8000,
+  };
+}
+function volume() {
+  analyser.getFloatTimeDomainData(buf);
+  let sum = 0;
+  for (const v of buf) sum += v * v;
+  return Math.sqrt(sum / buf.length);
+}
+
+// ---------- voice activity detection (runs every 50 ms) ----------
+function tick() {
+  const vol = volume();
+  $("meter").value = vol;
+  if (phase !== "listening") return;
+
+  const { minVol, endSilence, startTimeout } = cfg();
+  const threshold = Math.max(minVol, noiseFloor * 3);
+  const now = performance.now();
+
+  if (vol > threshold) {
+    loudMs += TICK_MS;
+    quietMs = 0;
+    if (!speaking && loudMs >= START_MS) {
+      speaking = true;
+      speechStart = now - loudMs;
+      setStatus("Listening...");
+    }
+  } else if (!speaking) {
+    loudMs = 0;
+    noiseFloor = 0.95 * noiseFloor + 0.05 * vol;     // learn the room's background noise
+  } else {
+    quietMs += TICK_MS;
+  }
+
+  if (speaking && (quietMs >= endSilence || now - speechStart > MAX_SPEECH_MS)) return endOfSpeech(now);
+  if (!speaking && now - windowStart > startTimeout) return noSpeech();
+}
+
+function stopRecorder() {
+  return new Promise((resolve) => {
+    recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+    recorder.stop();
+  });
+}
+
+function endOfSpeech(now) {
+  const speechMs = Math.round(now - quietMs - speechStart);
+  if (speechMs < MIN_SPEECH_MS) {                    // a click or a cough, not speech
+    speaking = false; loudMs = 0; quietMs = 0;
+    return;
+  }
+  phase = "processing";
+  setStatus("Thinking...");
+  stopRecorder().then((blob) => sendSpeech(blob, speechMs));
+}
+
+function noSpeech() {
+  phase = "processing";
+  setStatus("No answer heard...");
+  stopRecorder().then(() => sendSilence());
+}
+
+// ---------- talking to the server ----------
+async function post(url, body, headers) {
+  const res = await fetch(url, { method: "POST", headers, body });
+  if (!res.ok) throw new Error(`Server error ${res.status}`);
+  return res.json();
+}
+
+async function sendSpeech(blob, speechMs) {
+  try {
+    const form = new FormData();
+    form.append("audio", blob, "audio.webm");
+    form.append("duration_ms", String(speechMs));
+    handleReply(await post(`/calls/${sessionId}/voice`, form, {}));
+  } catch (err) {
+    setStatus(String(err));
+    setTimeout(listen, 1000);
+  }
+}
+
+async function sendSilence() {
+  try {
+    handleReply(await post(`/calls/${sessionId}/turn`, JSON.stringify({ text: "" }),
+                           { "Content-Type": "application/json" }));
+  } catch (err) {
+    setStatus(String(err));
+    setTimeout(listen, 1000);
+  }
+}
+
+function speak(text, onDone) {
+  let finished = false;
+  const done = () => { if (!finished) { finished = true; onDone(); } };
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "en-IN";
+  u.onend = done;
+  u.onerror = done;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+  setTimeout(done, 3000 + text.length * 150);        // safety net if the browser never fires onend
+}
+
+function handleReply(data) {
+  if (!sessionId) return;                            // the call was ended while we waited
+  addLine("You", data.heard === undefined ? "(no answer)" : (data.heard || "(silence)"));
+  addLine("Agent", data.reply);
+  if (data.timings_ms) console.log("server timings (ms)", data.timings_ms);
+  phase = "agent_speaking";
+  setStatus("Agent speaking...");
+  speak(data.reply, () => {
+    if (data.ended) {
+      setStatus(`Call ended: ${data.disposition}`);
+      endCall();
+    } else {
+      setTimeout(listen, TAIL_GUARD_MS);             // let the speaker's tail die out first
+    }
+  });
+}
+
+// ---------- call control ----------
+function listen() {
+  if (!sessionId) return;
+  chunks = [];
+  const options = { audioBitsPerSecond: 24000 };
+  if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) options.mimeType = "audio/webm;codecs=opus";
+  recorder = new MediaRecorder(stream, options);
+  recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  recorder.start();
+  speaking = false; loudMs = 0; quietMs = 0;
+  windowStart = performance.now();
+  phase = "listening";
+  setStatus("Your turn: just speak");
+}
+
+function endCall() {
+  phase = "idle";
+  sessionId = null;
+  speechSynthesis.cancel();
+  if (recorder && recorder.state === "recording") recorder.stop();
+  $("start").disabled = false;
+  $("stop").disabled = true;
+}
+
+async function startCall() {
+  try {
+    stream = stream || await navigator.mediaDevices.getUserMedia(
+      { audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (err) {
+    setStatus("Microphone permission is needed.");
+    return;
+  }
+  if (!audioCtx) {
+    audioCtx = new AudioContext();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    audioCtx.createMediaStreamSource(stream).connect(analyser);
+    buf = new Float32Array(analyser.fftSize);
+    timer = setInterval(tick, TICK_MS);
+  }
+  await audioCtx.resume();
+
+  const res = await fetch("/calls", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account_id: $("account").value }),
+  });
+  if (!res.ok) {
+    setStatus(res.status === 404 ? "Unknown account" : res.status === 403 ? "Customer asked not to be called" : `Error ${res.status}`);
+    return;
+  }
+  const data = await res.json();
+  sessionId = data.session_id;
+  $("log").innerHTML = "";
+  $("start").disabled = true;
+  $("stop").disabled = false;
+  addLine("Agent", data.reply);
+  phase = "agent_speaking";
+  setStatus("Agent speaking...");
+  speak(data.reply, () => setTimeout(listen, TAIL_GUARD_MS));
+}
+
+$("start").addEventListener("click", startCall);
+$("stop").addEventListener("click", endCall);
+</script>
+</body>
+</html>
