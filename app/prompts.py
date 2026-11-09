@@ -33,6 +33,7 @@ STAGE_NOTES = {
     ),
     State.VERIFYING: (
         "Ask for the last 4 digits of their PAN or their year of birth. "
+        "Ask the customer to say the digits slowly, one by one. "
         "When the customer gives exactly four digits, call verify_customer with those four digits. "
         "If they give a longer or shorter number, ask for just the last four digits. "
         "Never cut digits from a longer number and never guess."

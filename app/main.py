@@ -11,6 +11,8 @@ from app import config
 from app.db import Base, engine, get_db
 from app.engine import handle_turn, start_call
 from app.models import CallEvent, CallSession, Customer
+from fastapi.staticfiles import StaticFiles
+from app.voice import router as voice_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -83,3 +85,5 @@ def dispositions(db:Session = Depends(get_db)):
     ]
 
 
+app.include_router(voice_router)
+app.mount("/ui", StaticFiles(directory="static", html=True), name="ui")
