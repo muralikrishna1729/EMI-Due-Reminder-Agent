@@ -127,6 +127,8 @@ async function startCall() {
     }
     const data = await response.json();
     sessionId = data.session_id;
+    $("voice").disabled = true;
+    $("preview").disabled = true;
     $("log").textContent = "";
     addLine("Agent", data.reply);
     setStatus("Agent speaking...");
@@ -210,6 +212,8 @@ function handleReply(data, flags) {
         sessionId = null;
         $("talk").disabled = true;
         $("start").disabled = false;
+        $("voice").disabled = false;
+        $("preview").disabled = false;
         if (stream) {
           stream.getTracks().forEach((track) => track.stop());
           stream = null;
@@ -240,6 +244,7 @@ $("start").addEventListener("click", startCall);
 $("talk").addEventListener("pointerdown", startRecording);
 $("talk").addEventListener("pointerup", stopRecording);
 $("talk").addEventListener("pointerleave", stopRecording);
+$("talk").addEventListener("pointercancel", stopRecording);
 window.addEventListener("beforeunload", () => {
   clearHoldTimers();
   clearFollowupSilence();
