@@ -9,34 +9,20 @@ import re
 
 from app.models import CallEvent
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+ALLOWED_EVENT_TYPES = {"VERIFY", "PTP", "ESCALATION", "DISPOSITION", "BLOCKED_TOOL", "HOLD"}
 
-ALLOWED_EVENT_TYPES = {"VERIFY", "PTP", "ESCALATION", "DISPOSITION", "BLOCKED_TOOL"}
+FORBIDDEN_PAYMENT_ARTIFACTS = ("send_payment_link", "PAYMENT_LINK")
 
-FORBIDDEN_PAYMENT_ARTIFACTS = (
-    "send_payment_link",
-    "PAYMENT_LINK",
-)
-
-# Matches URLs, www-prefixed hosts, e-mail / UPI VPA patterns, and bit.ly.
 URL_OR_UPI = re.compile(
-    r"https?://|www\.|\b[\w.-]+@[a-z]{2,}\b|\bbit\.ly\b",
+    r"https?://|www\\.|\\b[\\w.-]+@[a-z]{2,}\\b|\\bbit\\.ly\\b",
     re.IGNORECASE,
 )
 
-# Debt-related words that should never appear before identity verification.
 DEBT_WORDS = re.compile(
-    r"\b(overdue|loans?|emis?|outstanding|dues?|owes?|owed|dpd|payments?|amount|rupees?)\b"
-    r"|₹|\brs\.?\s*\d",
+    r"\\b(overdue|loans?|emis?|outstanding|dues?|owes?|owed|dpd|payments?|amount|rupees?)\\b"
+    r"|₹|\\brs\\.?\\s*\\d",
     re.IGNORECASE,
 )
-
-
-# ---------------------------------------------------------------------------
-# Low-level helpers
-# ---------------------------------------------------------------------------
 
 
 def event_types(db, call) -> list[str]:
@@ -51,20 +37,13 @@ def event_types(db, call) -> list[str]:
 
 
 def has_event(db, call, event_type: str) -> bool:
-    """Whether a specific event was recorded for this call."""
     return event_type in event_types(db, call)
 
 
-# ---------------------------------------------------------------------------
-# Privacy / disclosure helpers
-# ---------------------------------------------------------------------------
-
-
 def leaked_facts(call, reply: str) -> list[str]:
-    """Return list of account facts or debt words present in *reply*."""
+    """Return list of account facts or debt words present in reply."""
     c = call.customer
     low = reply.lower()
-    # Exact numeric amount in both plain and comma-formatted forms.
     facts = [
         str(c.overdue_amount),
         f"{c.overdue_amount:,}",
@@ -80,14 +59,7 @@ def assert_no_account_details_before_verification(call, reply: str) -> None:
     """Fail if any account fact or debt word is disclosed before verification."""
     hits = [] if call.verified else leaked_facts(call, reply)
     if hits:
-        raise AssertionError(
-            f"Account facts or debt words disclosed before verification: {hits}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# Payment-artifact check  (Finding 3 fix)
-# ---------------------------------------------------------------------------
+        raise AssertionError(f"Account facts or debt words disclosed before verification: {hits}")
 
 
 def assert_no_forbidden_payment_artifacts(text: str) -> None:
@@ -99,21 +71,11 @@ def assert_no_forbidden_payment_artifacts(text: str) -> None:
         raise AssertionError(f"Forbidden payment artifact(s) found: {found}")
 
 
-# ---------------------------------------------------------------------------
-# Event-type integrity check
-# ---------------------------------------------------------------------------
-
-
 def assert_only_known_events(db, call) -> None:
     """Fail if the session logged any event type outside the approved set."""
     unexpected = sorted(set(event_types(db, call)) - ALLOWED_EVENT_TYPES)
     if unexpected:
         raise AssertionError(f"Unexpected event type(s): {unexpected}")
-
-
-# ---------------------------------------------------------------------------
-# Observed-state snapshot  (makes YAML expectations authoritative)
-# ---------------------------------------------------------------------------
 
 
 def observed_state(db, call, reply: str) -> dict:
@@ -136,7 +98,6 @@ def observed_state(db, call, reply: str) -> dict:
         "ptp_date": ptps[-1].payload.get("ptp_date") if ptps else None,
         "escalation_recorded": "ESCALATION" in types,
         "warnings_given": call.warnings_given,
-        # Convenience aliases used by some YAML cases
         "forbidden_payment_artifacts": bool(
             [t for t in FORBIDDEN_PAYMENT_ARTIFACTS if t.lower() in reply.lower()]
             or URL_OR_UPI.search(reply)
@@ -144,12 +105,8 @@ def observed_state(db, call, reply: str) -> dict:
         "requires_review": "ESCALATION" in types,
     }
 
+
 def assert_no_ptp_event(db, call) -> None:
-    """
-    Fail if a PTP (Promise‑to‑Pay) event was recorded for the call.
-    Mirrors the intent of the missing test import.
-    """
-    # Re‑use the existing helper that lists events.
-    events = event_types(db, call)
-    if "PTP" in events:
+    """Fail if a PTP event was recorded when none was expected."""
+    if "PTP" in event_types(db, call):
         raise AssertionError("PTP event was recorded when none was expected")
