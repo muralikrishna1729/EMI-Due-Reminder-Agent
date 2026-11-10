@@ -322,6 +322,8 @@ function endCall() {
   stopMedia();
   $("start").disabled = false;
   $("stop").disabled = true;
+  $("voice").disabled = false;
+  $("preview").disabled = false;
 }
 
 async function startCall() {
@@ -363,6 +365,8 @@ async function startCall() {
     $("log").textContent = "";
     $("start").disabled = true;
     $("stop").disabled = false;
+    $("voice").disabled = true;
+    $("preview").disabled = true;
     addLine("Agent", data.reply);
     agentSays(data.reply);
   } catch (error) {
