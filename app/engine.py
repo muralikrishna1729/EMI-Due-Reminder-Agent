@@ -18,7 +18,7 @@ from app.state_machine import State, next_state
 
 logger = logging.getLogger("EMI_Agent")
 FALLBACK_REPLY = "Sorry, I didn't catch that. Could you please repeat?"
-HOLD_REPLY = "Of course, please take your time. I'll stay on the line. Just say 'I'm ready' when you're back."
+HOLD_REPLY = "Of course. I can wait here for up to two minutes. I'll stay on the line; just say 'I'm ready' whenever you're back."
 HOLD_LIMIT_REPLY = "I'm sorry, I can only wait once during a call. Shall we continue now?"
 
 
