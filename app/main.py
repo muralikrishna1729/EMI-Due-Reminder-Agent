@@ -1,34 +1,41 @@
-from email.policy import HTTP
 import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, Header, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import func, select 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import config 
+from app import config
 from app.db import Base, engine, get_db
 from app.engine import handle_turn, start_call
 from app.models import CallEvent, CallSession, Customer
+from app.voice import router as voice_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
     yield
 
-app = FastAPI(title = "EMI Due Reminder Agent", lifespan = lifespan)
+
+app = FastAPI(title="EMI Due Reminder Agent", lifespan=lifespan)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+
 class StartCall(BaseModel):
-    account_id: str 
+    account_id: str
+
 
 @app.post("/calls")
-def create_call(body: StartCall, db: Session= Depends(get_db)):
+def create_call(body: StartCall, db: Session = Depends(get_db)):
     account_id = body.account_id.strip().upper()
-    customer= db.scalar(select(Customer).where(Customer.account_id == account_id))
+    customer = db.scalar(select(Customer).where(Customer.account_id == account_id))
     if not customer:
         raise HTTPException(404, "Unknown Account")
     if customer.do_not_call:
@@ -36,20 +43,30 @@ def create_call(body: StartCall, db: Session= Depends(get_db)):
     session, opening = start_call(db, customer)
     return {"session_id": session.id, "reply": opening, "state": session.state}
 
+
 class Turn(BaseModel):
     text: str = ""  # empty text = customer silence
 
+
 @app.post("/calls/{session_id}/turn")
-def turn(session_id:str, body:Turn, db:Session = Depends(get_db)):
+def turn(session_id: str, body: Turn, db: Session = Depends(get_db)):
     session = db.get(CallSession, session_id)
     if not session:
         raise HTTPException(404, "Unknown session")
-    r = handle_turn(db, session, body.text)
-    return {"reply": r.reply, "state": r.state, "ended": r.ended, "disposition": r.disposition}
+    result = handle_turn(db, session, body.text)
+    return {
+        "reply": result.reply,
+        "state": result.state,
+        "ended": result.ended,
+        "disposition": result.disposition,
+        "hold_seconds": result.hold_seconds,
+    }
+
 
 def require_key(x_api_key: str = Header(default="")):
     if not hmac.compare_digest(x_api_key, config.ADMIN_API_KEY):
         raise HTTPException(status_code=401, detail="Invalid API key")
+
 
 @app.get("/metrics", dependencies=[Depends(require_key)])
 def metrics(db: Session = Depends(get_db)):
@@ -73,8 +90,9 @@ def metrics(db: Session = Depends(get_db)):
         "containment_rate": round(1 - escalated / done, 3) if done else 0.0,
     }
 
+
 @app.get("/dispositions", dependencies=[Depends(require_key)])
-def dispositions(db:Session = Depends(get_db)):
+def dispositions(db: Session = Depends(get_db)):
     rows = db.scalars(
         select(CallEvent).where(CallEvent.type == "DISPOSITION").order_by(CallEvent.id)
     ).all()
@@ -83,3 +101,5 @@ def dispositions(db:Session = Depends(get_db)):
     ]
 
 
+app.include_router(voice_router)
+app.mount("/ui", StaticFiles(directory="static", html=True), name="ui")

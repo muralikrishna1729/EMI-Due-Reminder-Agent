@@ -4,3 +4,4 @@ sqlalchemy==2.1.5
 pydantic==2.14.1
 python-dotenv==1.2.4
 groq==1.7.0
+python-multipart

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMI reminder: voice demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 680px; margin: 2rem auto; padding: 0 1rem; }
+  #talk { font-size: 1.2rem; padding: 1rem 2rem; margin: 1rem 0; }
+  #log p { margin: .4rem 0; }
+  #status { color: #555; min-height: 1.4em; }
+  .controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 1rem 0; }
+  label { display: inline-flex; gap: .5rem; align-items: center; }
+</style>
+</head>
+<body>
+<h1>EMI Due Reminder Agent</h1>
+<div class="controls">
+  <input id="account" value="ACC-88392" aria-label="Demo account ID">
+  <button id="start">Start call</button>
+</div>
+<div class="controls">
+  <label for="voice">Agent voice</label>
+  <select id="voice" aria-label="Choose agent voice"></select>
+  <button id="preview" type="button">Preview voice</button>
+</div>
+<p id="status">Not in a call</p>
+<button id="talk" disabled>Hold to talk</button>
+<div id="log" aria-live="polite"></div>
+
+<script src="tts.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let sessionId = null;
+let stream = null;
+let recorder = null;
+let chunks = [];
+let busy = false;
+let holdTimer = null;
+let countdownTimer = null;
+let holdDeadline = 0;
+let followupSilenceTimer = null;
+
+const setStatus = (text) => { $("status").textContent = text; };
+function addLine(who, text) {
+  const p = document.createElement("p");
+  p.textContent = who + ": " + text;
+  $("log").appendChild(p);
+}
+function clearHoldTimers() {
+  if (holdTimer !== null) clearTimeout(holdTimer);
+  if (countdownTimer !== null) clearInterval(countdownTimer);
+  holdTimer = null;
+  countdownTimer = null;
+  holdDeadline = 0;
+}
+function clearFollowupSilence() {
+  if (followupSilenceTimer !== null) clearTimeout(followupSilenceTimer);
+  followupSilenceTimer = null;
+}
+
+async function post(url, body, headers) {
+  const response = await fetch(url, { method: "POST", headers: headers || {}, body: body });
+  if (!response.ok) throw new Error("Server error " + response.status);
+  return response.json();
+}
+
+function startHoldCountdown(seconds) {
+  clearHoldTimers();
+  if (!seconds || seconds <= 0) return;
+  holdDeadline = Date.now() + seconds * 1000;
+  const update = () => {
+    const remaining = Math.max(0, Math.ceil((holdDeadline - Date.now()) / 1000));
+    setStatus("On hold: take your time (" + remaining + " seconds left). Press and hold the button when you're ready.");
+  };
+  update();
+  countdownTimer = setInterval(update, 1000);
+  holdTimer = setTimeout(() => {
+    clearHoldTimers();
+    if (sessionId && !busy && (!recorder || recorder.state !== "recording")) {
+      sendAutomaticSilence(true);
+    }
+  }, seconds * 1000);
+}
+
+async function sendAutomaticSilence(isHoldExpiry) {
+  if (!sessionId || busy) return;
+  busy = true;
+  $("talk").disabled = true;
+  setStatus("Checking whether you're still there...");
+  try {
+    const data = await post(
+      "/calls/" + sessionId + "/turn",
+      JSON.stringify({ text: "" }),
+      { "Content-Type": "application/json" }
+    );
+    handleReply(data, { autoSilence: true, holdExpired: Boolean(isHoldExpiry) });
+  } catch (error) {
+    busy = false;
+    $("talk").disabled = false;
+    setStatus(String(error));
+  }
+}
+
+async function startCall() {
+  try {
+    if (!stream || !stream.active) {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+  } catch (error) {
+    setStatus("Microphone permission is needed.");
+    return;
+  }
+
+  $("start").disabled = true;
+  try {
+    const response = await fetch("/calls", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ account_id: $("account").value })
+    });
+    if (!response.ok) {
+      $("start").disabled = false;
+      setStatus(response.status === 404 ? "Unknown account" :
+        response.status === 403 ? "Customer asked not to be called" : "Error " + response.status);
+      return;
+    }
+    const data = await response.json();
+    sessionId = data.session_id;
+    $("voice").disabled = true;
+    $("preview").disabled = true;
+    $("log").textContent = "";
+    addLine("Agent", data.reply);
+    setStatus("Agent speaking...");
+    speakText(data.reply, {
+      onDone: () => {
+        if (!sessionId) return;
+        $("talk").disabled = false;
+        setStatus("Your turn: hold the button and talk");
+      }
+    });
+  } catch (error) {
+    $("start").disabled = false;
+    setStatus(String(error));
+  }
+}
+
+function startRecording() {
+  if (!sessionId || busy || $("talk").disabled || (recorder && recorder.state === "recording")) return;
+  clearHoldTimers();
+  clearFollowupSilence();
+  chunks = [];
+  const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+    ? "audio/webm;codecs=opus" : "";
+  recorder = new MediaRecorder(stream, mimeType ? { mimeType: mimeType } : undefined);
+  recorder.ondataavailable = (event) => {
+    if (event.data && event.data.size) chunks.push(event.data);
+  };
+  recorder.onstop = sendRecording;
+  recorder.start();
+  setStatus("Listening...");
+}
+
+function stopRecording() {
+  if (recorder && recorder.state === "recording") recorder.stop();
+}
+
+async function sendRecording() {
+  if (!sessionId) return;
+  busy = true;
+  $("talk").disabled = true;
+  setStatus("Thinking...");
+  const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+
+  try {
+    let data;
+    if (blob.size < 1500) {
+      data = await post(
+        "/calls/" + sessionId + "/turn",
+        JSON.stringify({ text: "" }),
+        { "Content-Type": "application/json" }
+      );
+    } else {
+      const form = new FormData();
+      form.append("audio", blob, "audio.webm");
+      data = await post("/calls/" + sessionId + "/voice", form, {});
+    }
+    handleReply(data, {});
+  } catch (error) {
+    busy = false;
+    $("talk").disabled = false;
+    setStatus(String(error));
+  }
+}
+
+function handleReply(data, flags) {
+  if (!sessionId) return;
+  flags = flags || {};
+  addLine("You", data.heard === undefined ? "(no answer)" : (data.heard || "(silence)"));
+  addLine("Agent", data.reply);
+  if (data.timings_ms) console.log("Server timings (ms)", data.timings_ms);
+
+  setStatus("Agent speaking...");
+  speakText(data.reply, {
+    onDone: ({ cancelled }) => {
+      if (cancelled) return;
+      busy = false;
+      if (data.ended) {
+        clearHoldTimers();
+        clearFollowupSilence();
+        setStatus("Call ended: " + data.disposition);
+        sessionId = null;
+        $("talk").disabled = true;
+        $("start").disabled = false;
+        $("voice").disabled = false;
+        $("preview").disabled = false;
+        if (stream) {
+          stream.getTracks().forEach((track) => track.stop());
+          stream = null;
+        }
+        return;
+      }
+
+      $("talk").disabled = false;
+      if (data.hold_seconds > 0) {
+        startHoldCountdown(data.hold_seconds);
+      } else {
+        setStatus("Your turn: hold the button and talk");
+        if (flags.autoSilence) {
+          clearFollowupSilence();
+          followupSilenceTimer = setTimeout(() => {
+            if (sessionId && !busy && (!recorder || recorder.state !== "recording")) {
+              sendAutomaticSilence(false);
+            }
+          }, 8000);
+        }
+      }
+    }
+  });
+}
+
+initVoicePicker($("voice"), $("preview"));
+$("start").addEventListener("click", startCall);
+$("talk").addEventListener("pointerdown", startRecording);
+$("talk").addEventListener("pointerup", stopRecording);
+$("talk").addEventListener("pointerleave", stopRecording);
+$("talk").addEventListener("pointercancel", stopRecording);
+window.addEventListener("beforeunload", () => {
+  clearHoldTimers();
+  clearFollowupSilence();
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+  speechSynthesis.cancel();
+});
+</script>
+</body>
+</html>
