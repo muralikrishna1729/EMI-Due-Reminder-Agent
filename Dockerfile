@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 
 COPY app ./app
+COPY static ./static
 
 # Do not run as root inside the container.
 RUN useradd --create-home appuser && chown -R appuser /app
