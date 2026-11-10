@@ -1,11 +1,12 @@
 import logging
 import json
 from dataclasses import dataclass
+from datetime import date
 from groq import GroqError
 from sqlalchemy.orm import Session
 from app import config
 from app.guardrails import (
-    DNC_RE, SAFE_GOODBYE, THIRD_PARTY_RE, is_abusive, sanitize_pre_auth_reply, tidy_reply,
+    DNC_RE, SAFE_GOODBYE, THIRD_PARTY_RE, clean_reply, fix_weekdays, is_abusive, sanitize_pre_auth_reply, tidy_reply,
 )
 from app.tool_checks import check_tool_request
 from app.tools import end_call, execute_tool, log_event, schemas_for_state
@@ -13,7 +14,6 @@ from app.llm import chat
 from app.models import CallSession, Customer
 from app.prompts import build_system_prompt
 from app.state_machine import State, next_state
-from datetime import date
 
 logger = logging.getLogger("EMI_Agent")
 FALLBACK_REPLY = "Sorry, I didn't catch that. Could you please repeat?"
@@ -47,7 +47,7 @@ def precheck(db:Session, s: CallSession, user_text:str)->str | None:
     text = (user_text or "").strip()
     if s.state == State.ENDED.value:
         return "This call has already ended."
-    
+
     if not text:
         s.silence_count +=1
         if s.silence_count >=2:
@@ -87,6 +87,8 @@ def llm_round(db:Session, s:CallSession, messages: list[dict], llm = chat):
         logger.warning("LLM call failed: %r", exc)
         return FALLBACK_REPLY, messages
     msg = response.choices[0].message
+    if getattr(response.choices[0], "finish_reason", None) == "length":
+        logger.warning("LLM reply was cut off by max_tokens")
     if not msg.tool_calls:
         text = (msg.content or "").strip()
         if not text:
@@ -131,7 +133,9 @@ def llm_round(db:Session, s:CallSession, messages: list[dict], llm = chat):
 
 def finalize(db:Session, s:CallSession, user_text:str, reply:str | None)-> TurnResult:
     reply = (reply or "").strip() or FALLBACK_REPLY
+    reply = clean_reply(reply)
     reply = tidy_reply(reply)
+    reply = fix_weekdays(reply, date.today())
     if not s.verified:
         reply = sanitize_pre_auth_reply(reply, call_ended = s.state == State.ENDED.value)
     if s.state == State.GREETING.value:
@@ -159,5 +163,3 @@ def handle_turn(db:Session, s:CallSession, user_text:str, llm= chat)->TurnResult
                 break
         # If every round ran tools (reply is None), finalize uses FALLBACK_REPLY.
     return finalize(db, s, user_text, reply)
-
-

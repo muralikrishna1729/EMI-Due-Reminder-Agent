@@ -13,7 +13,7 @@ def chat(messages: list[dict], tools: list[dict]):
         model = config.GROQ_MODEL,
         messages = messages,
         temperature = 0.1,
-        max_tokens = 300,
+        max_tokens = 800,
     )
     if tools:
         kwargs["tools"] = tools

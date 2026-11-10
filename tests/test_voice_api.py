@@ -21,19 +21,19 @@ def send(client, sid):
 
 
 def test_silence_is_handled_like_typed_silence(client, monkeypatch):
-    monkeypatch.setattr("app.voice.transcribe", lambda data, filename="audio.webm": "")
+    monkeypatch.setattr("app.voice.transcribe", lambda data, filename="audio.webm", *args, **kwargs: "")
     r = send(client, start(client)).json()
     assert "still there" in r["reply"] and r["ended"] is False
 
 
 def test_spoken_stop_calling_ends_the_call(client, monkeypatch):
-    monkeypatch.setattr("app.voice.transcribe", lambda data, filename="audio.webm": "please stop calling me")
+    monkeypatch.setattr("app.voice.transcribe", lambda data, filename="audio.webm", *args, **kwargs: "please stop calling me")
     r = send(client, start(client)).json()
     assert r["ended"] is True and r["disposition"] == "DO_NOT_CALL"
 
 
 def test_speech_to_text_failure_returns_502(client, monkeypatch):
-    def boom(data, filename="audio.webm"):
+    def boom(data, filename="audio.webm", *args, **kwargs):
         raise RuntimeError("provider down")
     monkeypatch.setattr("app.voice.transcribe", boom)
     assert send(client, start(client)).status_code == 502

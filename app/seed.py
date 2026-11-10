@@ -24,7 +24,7 @@ def main():
             return 
         db.add_all(
             [
-                 make_customer("ACC-88392ACC-88392", "Rahul Sharma", 8499, 12, "1234", "1995"),
+                 make_customer("ACC-88392", "Rahul Sharma", 8499, 12, "1234", "1995"),
                 make_customer("ACC-77120", "Priya Nair", 12500, 5, "5678", "1990", "Two-wheeler Loan"),
             ]
         )

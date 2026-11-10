@@ -29,3 +29,7 @@
 1. **Pacing / hesitation pauses**: Slow multi-second pauses in the middle of thinking can exceed 1000ms silence threshold and trigger early cutoff. Recommended tuning: 1200ms for hesitant speakers.
 2. **Acoustic echo on high speaker volumes**: Without headphones, high laptop speaker volume can trigger VAD if sound leaks past the 400ms tail guard; hardware echo cancellation in `getUserMedia` mitigates this for moderate volumes.
 3. **Browser SpeechSynthesis voice inconsistency**: Native OS TTS voices vary between Chrome and Edge; while functional, prosody and pronunciation of Indian financial phrasing (e.g. Rupee amounts) benefit from future cloud TTS integration (V5).
+4. **Wait time mismatch in voice loop**: If a user asks to wait a few minutes, the backend VAD silence timer still triggers at ~8s. Resolved by instructing the agent prompt never to promise multi-minute waits and simply acknowledge "take your time".
+5. **Non-chronological date proposals**: LLMs could propose earlier dates when renegotiating. Resolved by prompt instruction enforcing that counter-proposals always progress forward in calendar time.
+
+

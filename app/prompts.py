@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, timedelta
+from app import config
 from app.models import CallSession
 from app.state_machine import State
 
@@ -36,10 +37,11 @@ STAGE_NOTES = {
         "Ask the customer to say the digits slowly, one by one. "
         "When the customer gives exactly four digits, call verify_customer with those four digits. "
         "If they give a longer or shorter number, ask for just the last four digits. "
-        "Never cut digits from a longer number and never guess."
+        "Never cut digits from a longer number and never guess. "
+        "If the customer asks for more time to look up their details, say only 'take your time' — "
+        "never promise a specific number of minutes; the system will check in if there is silence."
     ),
 }
-
 
 NEGOTIATING = """
 CURRENT STAGE: NEGOTIATING. The customer's identity is verified.
@@ -48,6 +50,9 @@ Account facts: {loan_type}, overdue amount ₹{amount:,},
 {dpd} days past due.
 Promise to pay already logged in this call: {ptp}.
 Today's date is {today}.
+Calendar for the next two weeks (copy these weekday and date pairs exactly; never work them out yourself):
+{calendar}
+Latest day you may propose or accept: {latest}. Propose one day at a time.
 
 Steps:
 1. Politely explain the overdue EMI and ask on which day the customer will pay.
@@ -57,6 +62,9 @@ Steps:
    (for example "Would Friday, 23 October work?") and wait for a clear yes. Never
    choose a date or amount yourself. If the customer does not name an amount, ask
    whether they will pay the full overdue amount.
+   When re-proposing a date after a customer declines or gives a vague answer, always
+   suggest a date at least 3 days later than the previously proposed date — never
+   propose an earlier date.
 3. If a tool says the date does not match, use the date it suggests or ask the
    customer again. Do not argue with a tool result.
 4. After the promise is logged, read the date (in spoken form) and the amount back
@@ -74,6 +82,16 @@ Steps:
 8. After the customer confirms the recorded promise, call mark_disposition with
    PTP_AGREED, then say a short, polite goodbye.
 
+What you know: the loan type, the overdue amount and the days overdue. Nothing else.
+What you do NOT have: the original due date, interest rate, penalties or late fees, total balance,
+the loan start date, the lender's name. If asked about any of these, say you do not have that
+information and offer to pass the question to a human agent (escalate_to_agent, reason OTHER).
+Never say what will or will not be charged. Never repeat the customer's verification digits or birth year.
+If the customer asks a question, answer it first. Ask for the payment day at most once every two replies.
+Outcomes: HARDSHIP_ESCALATED = the customer cannot pay, wants more time, a discount, or a change to loan
+terms. DISPUTED = the customer says they do not owe it or the amount is wrong. If the customer is only upset
+or asking questions, keep helping and do not end the call.
+
 You may never promise a waiver.
 If a tool returns an error, follow its instruction.
 """
@@ -83,28 +101,61 @@ ENDED = (
     "Do not mention any account, loan, amount or payment."
 )
 
-def build_system_prompt(s: CallSession)->str:
-    state = State(s.state) #Convert the state string to the enum once
+ENDED_ESCALATED = (
+    "\nThe call is ending because the customer's request needs a human agent. In one or two short "
+    "sentences, tell the customer that a human agent will contact them about it, then say goodbye. "
+    "Do not promise any outcome, discount or waiver."
+)
+
+ENDED_PTP = (
+    "\nThe call is ending. In one or two short sentences, thank the customer, repeat the promised day "
+    "(from this conversation, in spoken form), say they can pay through the lender's official app or "
+    "website, and say goodbye."
+)
+
+
+def _calendar(today: date, days: int = 14) -> str:
+    return "\n".join(f"- {d.strftime('%A')}, {d.day} {d.strftime('%B')}"
+                     for d in (today + timedelta(days=i) for i in range(days)))
+
+
+def _latest(today: date) -> str:
+    d = today + timedelta(days=config.MAX_PTP_DAYS_AHEAD)
+    return f"{d.day} {d.strftime('%B')}"
+
+
+def _ended_prompt(s: CallSession) -> str:
+    if s.verified and s.disposition in ("HARDSHIP_ESCALATED", "DISPUTED"):
+        return ENDED_ESCALATED
+    if s.verified and s.disposition == "PTP_AGREED":
+        return ENDED_PTP
+    return ENDED          # existing neutral goodbye text
+
+
+def build_system_prompt(s: CallSession) -> str:
+    state = State(s.state)
     c = s.customer
 
     if state == State.ENDED:
-        return PERSONA + ENDED
+        return PERSONA + _ended_prompt(s)
     
     if state in (State.GREETING, State.VERIFYING):
-        notes = STAGE_NOTES[state].format(name = c.full_name)
+        notes = STAGE_NOTES[state].format(name=c.full_name)
         return PERSONA + PRE_AUTH.format(
-            stage = state.value,
-            name = c.full_name,
-            stage_notes = notes
+            stage=state.value,
+            name=c.full_name,
+            stage_notes=notes
         )
 
-    if state == state.NEGOTIATING:
-        return PERSONA+ NEGOTIATING.format(
-            loan_type = c.loan_type,
-            amount = c.overdue_amount,
-            dpd = c.dpd,
-            ptp = "yes" if s.ptp_logged else "no",
-            today = date.today().isoformat(), 
+    if state == State.NEGOTIATING:
+        today = date.today()
+        return PERSONA + NEGOTIATING.format(
+            loan_type=c.loan_type,
+            amount=c.overdue_amount,
+            dpd=c.dpd,
+            ptp="yes" if s.ptp_logged else "no",
+            today=today.isoformat(),
+            calendar=_calendar(today),
+            latest=_latest(today),
         )
-    raise ValueError(f"No Prompt defined for state{state}")
-    
+    raise ValueError(f"No Prompt defined for state {state}")

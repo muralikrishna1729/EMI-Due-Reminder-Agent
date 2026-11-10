@@ -13,7 +13,12 @@ def _get_client() -> Groq:
         _client = Groq(api_key=config.GROQ_API_KEY)
     return _client
 
-def transcribe(audio: bytes, filename: str = "audio.webm", language: str | None = None) -> str:
+def transcribe(
+    audio: bytes,
+    filename: str = "audio.webm",
+    language: str | None = None,
+    prompt: str | None = None,
+) -> str:
     kwargs = dict(
         file=(filename, audio),
         model=config.STT_MODEL,
@@ -22,6 +27,8 @@ def transcribe(audio: bytes, filename: str = "audio.webm", language: str | None 
     )
     if language:                          # None = let the model detect the language
         kwargs["language"] = language
+    if prompt:
+        kwargs["prompt"] = prompt
     result = _get_client().audio.transcriptions.create(**kwargs)
 
     data = result.model_dump() if hasattr(result, "model_dump") else dict(result)

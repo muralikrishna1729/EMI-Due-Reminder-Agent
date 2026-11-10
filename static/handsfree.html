@@ -173,7 +173,7 @@ function handleReply(data) {
 function listen() {
   if (!sessionId) return;
   chunks = [];
-  const options = { audioBitsPerSecond: 24000 };
+  const options = { audioBitsPerSecond: 32000 };
   if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) options.mimeType = "audio/webm;codecs=opus";
   recorder = new MediaRecorder(stream, options);
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
@@ -236,3 +236,4 @@ $("stop").addEventListener("click", endCall);
 </script>
 </body>
 </html>
+

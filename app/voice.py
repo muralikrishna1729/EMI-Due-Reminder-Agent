@@ -4,6 +4,7 @@ import time
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from app import config
 from app.db import get_db
 from app.engine import handle_turn
 from app.models import CallSession
@@ -27,7 +28,12 @@ def voice_turn(session_id: str, audio: UploadFile = File(...), db: Session = Dep
     
     t0 = time.perf_counter()
     try:
-        heard = transcribe(data, audio.filename or "audio.webm")
+        heard = transcribe(
+            data,
+            audio.filename or "audio.webm",
+            language=config.STT_LANGUAGE,
+            prompt=f"{session.customer.full_name}. EMI, PAN, overdue, penalty, interest, birth year.",
+        )
     except Exception as exc:                       # provider or network failure
         logger.warning("speech-to-text failed: %r", exc)
         raise HTTPException(502, "Speech-to-text failed")
