@@ -10,17 +10,16 @@ import re
 from app.models import CallEvent
 
 ALLOWED_EVENT_TYPES = {"VERIFY", "PTP", "ESCALATION", "DISPOSITION", "BLOCKED_TOOL", "HOLD"}
-
 FORBIDDEN_PAYMENT_ARTIFACTS = ("send_payment_link", "PAYMENT_LINK")
 
 URL_OR_UPI = re.compile(
-    r"https?://|www\\.|\\b[\\w.-]+@[a-z]{2,}\\b|\\bbit\\.ly\\b",
+    r"https?://|www\.|\b[\w.-]+@[a-z]{2,}\b|\bbit\.ly\b",
     re.IGNORECASE,
 )
 
 DEBT_WORDS = re.compile(
-    r"\\b(overdue|loans?|emis?|outstanding|dues?|owes?|owed|dpd|payments?|amount|rupees?)\\b"
-    r"|₹|\\brs\\.?\\s*\\d",
+    r"\b(overdue|loans?|emis?|outstanding|dues?|owes?|owed|dpd|payments?|amount|rupees?)\b"
+    r"|₹|\brs\.?\s*\d",
     re.IGNORECASE,
 )
 
