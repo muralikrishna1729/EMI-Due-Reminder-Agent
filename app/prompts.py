@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 from app import config
-from app.models import CallSession
+from app.models import CallEvent, CallSession
 from app.state_machine import State
 
 PERSONA = """You are a calm, polite and professional automated assistant making an EMI reminder call.
@@ -134,6 +134,16 @@ def _ended_prompt(s: CallSession) -> str:
     return ENDED          # existing neutral goodbye text
 
 
+def _recorded_ptp(s: CallSession) -> str:
+    event = next(
+        (item for item in reversed(s.__dict__.get("_sa_instance_state").session.query(CallEvent).filter_by(session_id=s.id, type="PTP").all())),
+        None,
+    )
+    if not event:
+        return "No promise has been recorded."
+    return f"Recorded promise: date {event.payload['ptp_date']}, amount ₹{event.payload['amount']:,}. Do not negotiate another date or amount."
+
+
 def build_system_prompt(s: CallSession) -> str:
     state = State(s.state)
     c = s.customer
@@ -155,7 +165,7 @@ def build_system_prompt(s: CallSession) -> str:
             loan_type=c.loan_type,
             amount=c.overdue_amount,
             dpd=c.dpd,
-            ptp="yes" if s.ptp_logged else "no",
+            ptp=_recorded_ptp(s) if s.ptp_logged else "No",
             today=today.isoformat(),
             calendar=_calendar(today),
             latest=_latest(today),

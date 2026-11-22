@@ -129,6 +129,12 @@ def _verify(db, s: CallSession, raw: dict) -> dict:
 
 def _ptp(db, s: CallSession, raw: dict) -> dict:
     """responsible for validating and recording when a customer agrees to pay their overdue amount by a specific date."""
+    if s.ptp_logged:
+        return {
+            "ok": False,
+            "error": "A promise to pay is already recorded for this call. No revision flow is available.",
+        }
+
     a = PTPArgs.model_validate(raw) #ensures ptp_date is a valid date (in YYYY-MM-DD format) and amount is a positive integer.
     c = s.customer #customer profile linked to the current call session
     today = date.today()

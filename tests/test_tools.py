@@ -116,6 +116,22 @@ def test_accepted_ptp_sets_flag_and_event(db, verified_call):
     assert len(events(db, verified_call, "PTP")) == 1
 
 
+def test_second_ptp_is_rejected_without_a_supported_revision_flow(db, verified_call):
+    first = execute_tool(
+        db, verified_call, "log_promise_to_pay", {"ptp_date": FUTURE, "amount": 8499}
+    )
+    second = execute_tool(
+        db,
+        verified_call,
+        "log_promise_to_pay",
+        {"ptp_date": (date.today() + timedelta(days=4)).isoformat(), "amount": 8499},
+    )
+    assert first["ok"] is True
+    assert second["ok"] is False
+    assert "already recorded" in second["error"]
+    assert len(events(db, verified_call, "PTP")) == 1
+
+
 # ---------- escalation ----------
 
 def test_escalation_creates_ticket_and_event(db, verified_call):
