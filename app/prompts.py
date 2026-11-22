@@ -1,4 +1,6 @@
 from datetime import date, timedelta
+
+from sqlalchemy.orm import object_session
 from app import config
 from app.models import CallEvent, CallSession
 from app.state_machine import State
@@ -135,13 +137,26 @@ def _ended_prompt(s: CallSession) -> str:
 
 
 def _recorded_ptp(s: CallSession) -> str:
-    event = next(
-        (item for item in reversed(s.__dict__.get("_sa_instance_state").session.query(CallEvent).filter_by(session_id=s.id, type="PTP").all())),
-        None,
+    session = object_session(s)
+    if session is None:
+        return _unavailable_ptp_context()
+
+    event = (
+        session.query(CallEvent)
+        .filter_by(session_id=s.id, type="PTP")
+        .order_by(CallEvent.id.desc())
+        .first()
     )
     if not event:
-        return "No promise has been recorded."
+        return _unavailable_ptp_context()
     return f"Recorded promise: date {event.payload['ptp_date']}, amount ₹{event.payload['amount']:,}. Do not negotiate another date or amount."
+
+
+def _unavailable_ptp_context() -> str:
+    return (
+        "A promise to pay may already be recorded, but its details are unavailable. "
+        "Do not negotiate another date or amount. Do not claim a date or amount was recorded."
+    )
 
 
 def build_system_prompt(s: CallSession) -> str:
