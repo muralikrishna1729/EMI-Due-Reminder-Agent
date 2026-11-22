@@ -9,12 +9,18 @@ from app.db import get_db
 from app.engine import handle_turn
 from app.models import CallSession
 from app.speech_text import normalize_transcript
-from app.stt import transcribe
+from app.audio_pipeline import recover_pre_roll, START_FRAME_COUNT
+
+# Import transcribe function directly for use in voice_turn
+from app.stt import transcribe as stt_transcribe
+
+def transcribe(*args, **kwargs):
+    """Wrapper around stt_transcribe to maintain API compatibility."""
+    return stt_transcribe(*args, **kwargs)
 
 logger = logging.getLogger("emi_agent")
 router = APIRouter()
 MAX_AUDIO_BYTES = 5 * 1024 * 1024
-
 
 def _mark_interrupted_reply(session: CallSession, interrupt_at: int) -> None:
     """Keep only the portion of the latest assistant reply the customer could have heard."""
@@ -36,7 +42,6 @@ def _mark_interrupted_reply(session: CallSession, interrupt_at: int) -> None:
     last["content"] = f"{heard} [interrupted by customer]".strip()
     session.history = history[:-1] + [last]
 
-
 @router.post("/calls/{session_id}/voice")
 def voice_turn(
     session_id: str,
@@ -48,6 +53,10 @@ def voice_turn(
     session = db.get(CallSession, session_id)
     if not session:
         raise HTTPException(404, "Unknown session")
+
+    # Use session's frame_index instead of global variable
+    if not hasattr(session, 'frame_index'):
+        session.frame_index = 0
     data = audio.file.read(MAX_AUDIO_BYTES + 1)
     if len(data) > MAX_AUDIO_BYTES:
         raise HTTPException(413, "Audio too large")
@@ -70,6 +79,19 @@ def voice_turn(
     _mark_interrupted_reply(session, interrupt_at)
     if interrupt_at > 0:
         db.commit()
+
+    # Detect speech start: if transcript is non-empty, consider it a new utterance
+    if heard.strip():
+        # Use current frame index as start of pre-roll window
+        start_frame = session.frame_index
+        end_frame = start_frame + START_FRAME_COUNT
+
+        # Recover pre-roll frames
+        recover_pre_roll(session_id, start_frame, end_frame)
+
+    # Update frame index (this would come from the worklet's frameCounter in a real implementation)
+    # For now, simulate incremental advance
+    session.frame_index += 100  # placeholder; replace with actual frame count when integrated
 
     result = handle_turn(db, session, normalize_transcript(heard))
     t2 = time.perf_counter()

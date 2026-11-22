@@ -9,18 +9,20 @@ from app.guardrails import (
     DNC_RE, HOLD_RE, SAFE_GOODBYE, THIRD_PARTY_RE, clean_reply, fix_weekdays,
     is_abusive, sanitize_pre_auth_reply, tidy_reply,
 )
+from app.core import get_history_buffer, get_utterance_buffer, clear_utterance_buffer
 from app.tool_checks import check_tool_request
 from app.tools import end_call, execute_tool, log_event, schemas_for_state
 from app.llm import chat
 from app.models import CallEvent, CallSession, Customer
 from app.prompts import build_system_prompt
 from app.state_machine import State, next_state
+from app.constants import START_FRAME_COUNT, BARGE_FRAME_COUNT
+from app.audio_pipeline import recover_pre_roll as audio_pipeline_recover_pre_roll
 
 logger = logging.getLogger("EMI_Agent")
 FALLBACK_REPLY = "Sorry, I didn't catch that. Could you please repeat?"
 HOLD_REPLY = "Of course, please take your time. I can wait here for up to two minutes. I'll stay on the line; just say 'I'm ready' whenever you're back."
 HOLD_LIMIT_REPLY = "I'm sorry, I can only wait once during a call. Shall we continue now?"
-
 
 @dataclass
 class TurnResult:
@@ -29,7 +31,6 @@ class TurnResult:
     ended: bool
     disposition: str | None
     hold_seconds: int = 0
-
 
 def start_call(db: Session, customer: Customer) -> tuple[CallSession, str]:
     opening = (
@@ -45,7 +46,6 @@ def start_call(db: Session, customer: Customer) -> tuple[CallSession, str]:
     db.add(session)
     db.commit()
     return session, opening
-
 
 def precheck(db: Session, s: CallSession, user_text: str) -> str | None:
     """Return a canned reply if handled without the LLM; otherwise None."""
@@ -88,14 +88,11 @@ def precheck(db: Session, s: CallSession, user_text: str) -> str | None:
 
     return None
 
-
 def build_messages(s: CallSession, user_text: str) -> list[dict]:
     system = {"role": "system", "content": build_system_prompt(s)}
     return [system] + list(s.history)[-20:] + [{"role": "user", "content": user_text}]
 
-
 def llm_round(db: Session, s: CallSession, messages: list[dict], llm=chat):
-    """One LLM call. Returns (reply, messages); reply=None means tools ran."""
     try:
         response = llm(messages, schemas_for_state(State(s.state)))
     except GroqError as exc:
@@ -125,8 +122,6 @@ def llm_round(db: Session, s: CallSession, messages: list[dict], llm=chat):
             args = json.loads(tc.function.arguments or "{}")
         except json.JSONDecodeError:
             args = {}
-        if not isinstance(args, dict):
-            args = {}
         problem = check_tool_request(tc.function.name, args, messages, date.today())
         if problem:
             log_event(db, s, "BLOCKED_TOOL", {
@@ -145,7 +140,6 @@ def llm_round(db: Session, s: CallSession, messages: list[dict], llm=chat):
     # Verification or another tool may have changed the session state.
     messages[0] = {"role": "system", "content": build_system_prompt(s)}
     return None, messages
-
 
 def finalize(db: Session, s: CallSession, user_text: str, reply: str | None) -> TurnResult:
     hold_seconds = getattr(s, "_hold_seconds", 0)
@@ -184,3 +178,10 @@ def handle_turn(db: Session, s: CallSession, user_text: str, llm=chat) -> TurnRe
                 break
         # If every round ran tools (reply is None), finalize uses FALLBACK_REPLY.
     return finalize(db, s, user_text, reply)
+
+def recover_pre_roll(session_id: str, start_frame: int, end_frame: int) -> None:
+    """
+    Recover PCM frames from the per-session HistoryBuffer and append them to the
+    active utterance buffer for the given session.
+    """
+    audio_pipeline_recover_pre_roll(session_id, start_frame, end_frame)
